@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart' hide User;
 import 'package:supabase_flutter/supabase_flutter.dart' as supabase show User;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:http/http.dart' as http;
 import 'login.dart';
 import 'register.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -168,16 +171,25 @@ class _MainPageState extends State<MainPage> {
     try {
       // Проверяем разрешение на запись
       if (await _audioRecorder.hasPermission()) {
-        // Получаем директорию для сохранения файлов
-        final directory = await getApplicationDocumentsDirectory();
-        final timestamp = DateTime.now().millisecondsSinceEpoch;
-        final filePath = '${directory.path}/recording_$timestamp.m4a';
+        String? filePath;
         
-        // Начинаем запись
-        await _audioRecorder.start(
-          const RecordConfig(),
-          path: filePath,
-        );
+        if (kIsWeb) {
+          // На веб-платформе записываем без указания пути (получим blob URL)
+          await _audioRecorder.start(
+            const RecordConfig(encoder: AudioEncoder.opus),
+            path: '',
+          );
+        } else {
+          // На нативных платформах используем файловую систему
+          final directory = await getApplicationDocumentsDirectory();
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          filePath = '${directory.path}/recording_$timestamp.m4a';
+          
+          await _audioRecorder.start(
+            const RecordConfig(),
+            path: filePath,
+          );
+        }
         
         setState(() {
           _isRecording = true;
@@ -206,7 +218,7 @@ class _MainPageState extends State<MainPage> {
   // Функция для остановки записи и расшифровки
   void _stopRecordingAndRecognize() async {
     try {
-      // Останавливаем запись и получаем путь к файлу
+      // Останавливаем запись и получаем путь к файлу (или blob URL на web)
       final path = await _audioRecorder.stop();
       
       setState(() {
@@ -215,32 +227,40 @@ class _MainPageState extends State<MainPage> {
       });
 
       if (path != null && path.isNotEmpty) {
-        // Проверяем, что файл существует
-        final file = File(path);
-        if (await file.exists()) {
-          final fileSize = await file.length();
-          
-          // Имитация распознавания речи (здесь можно добавить реальное распознавание)
-          await Future.delayed(const Duration(seconds: 2));
-          
-          // Пример распознанного текста
-          final sampleTexts = [
-            'Это пример распознанного текста из аудиозаписи. Файл сохранен: ${file.path}',
-            'Сегодня прекрасная погода для прогулки в парке. Солнце светит ярко, птицы поют свои песни. Размер файла: ${(fileSize / 1024).toStringAsFixed(2)} KB',
-            'Технологии искусственного интеллекта стремительно развиваются и меняют нашу жизнь. Запись сохранена успешно.',
-            'Для успешного выполнения задачи необходимо тщательное планирование и последовательное выполнение этапов. Аудио файл готов.'
-          ];
-          
-          final randomText = sampleTexts[DateTime.now().millisecondsSinceEpoch % sampleTexts.length];
-          
-          setState(() {
-            _recognizedText = randomText;
-            _isProcessing = false;
-            _currentRecordingPath = path;
-          });
+        String fileInfo;
+        
+        if (kIsWeb) {
+          // На web получаем blob URL
+          fileInfo = 'Blob URL получен';
         } else {
-          throw Exception('Файл записи не найден');
+          // На нативных платформах проверяем файл
+          final file = File(path);
+          if (await file.exists()) {
+            final fileSize = await file.length();
+            fileInfo = 'Размер файла: ${(fileSize / 1024).toStringAsFixed(2)} KB';
+          } else {
+            throw Exception('Файл записи не найден');
+          }
         }
+        
+        // Имитация распознавания речи (здесь можно добавить реальное распознавание)
+        await Future.delayed(const Duration(seconds: 2));
+        
+        // Пример распознанного текста
+        final sampleTexts = [
+          'Это пример распознанного текста из аудиозаписи. $fileInfo',
+          'Сегодня прекрасная погода для прогулки в парке. Солнце светит ярко, птицы поют свои песни. $fileInfo',
+          'Технологии искусственного интеллекта стремительно развиваются и меняют нашу жизнь. Запись сохранена успешно.',
+          'Для успешного выполнения задачи необходимо тщательное планирование и последовательное выполнение этапов. Аудио файл готов.'
+        ];
+        
+        final randomText = sampleTexts[DateTime.now().millisecondsSinceEpoch % sampleTexts.length];
+        
+        setState(() {
+          _recognizedText = randomText;
+          _isProcessing = false;
+          _currentRecordingPath = path;
+        });
       } else {
         throw Exception('Не удалось получить путь к файлу записи');
       }
@@ -259,12 +279,39 @@ class _MainPageState extends State<MainPage> {
     }
   }
 
-  // Сохранение распознанного текста и файла
+  // Получение байтов аудио записи
+  Future<Uint8List?> _getAudioBytes() async {
+    if (_currentRecordingPath == null || _currentRecordingPath!.isEmpty) {
+      return null;
+    }
+
+    if (kIsWeb) {
+      // На web получаем blob по URL
+      try {
+        final response = await http.get(Uri.parse(_currentRecordingPath!));
+        if (response.statusCode == 200) {
+          return response.bodyBytes;
+        }
+      } catch (e) {
+        debugPrint('Ошибка получения blob: $e');
+      }
+      return null;
+    } else {
+      // На нативных платформах читаем файл
+      final file = File(_currentRecordingPath!);
+      if (await file.exists()) {
+        return await file.readAsBytes();
+      }
+      return null;
+    }
+  }
+
+  // Отправка записи на сервер
   Future<void> _saveRecord() async {
-    if (_recognizedText.isEmpty || _currentRecordingPath == null) {
+    if (_currentRecordingPath == null || _currentRecordingPath!.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Нет данных для сохранения')),
+          const SnackBar(content: Text('Нет записи для отправки')),
         );
       }
       return;
@@ -275,36 +322,40 @@ class _MainPageState extends State<MainPage> {
         _isProcessing = true;
       });
 
-      // Проверяем, что файл существует
-      final file = File(_currentRecordingPath!);
-      if (!await file.exists()) {
-        throw Exception('Аудио файл не найден');
+      // Получаем байты аудио
+      final audioBytes = await _getAudioBytes();
+
+      if (audioBytes == null || audioBytes.isEmpty) {
+        throw Exception('Не удалось получить аудио данные');
       }
 
-      // Сохраняем информацию о записи в базу данных
-      final record = {
-        'user_id': _supabase.auth.currentUser!.id,
-        'text': _recognizedText,
-        'file_path': _currentRecordingPath,
-        'created_at': DateTime.now().toIso8601String(),
-      };
+      // Отправляем на сервер
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final extension = kIsWeb ? 'webm' : 'm4a';
+      final filename = 'recording_$timestamp.$extension';
 
-      final response = await _supabase
-          .from('audio_records')
-          .insert(record)
-          .select();
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('https://music.panfilius.ru/api/newRecord'),
+      );
 
-      if (response.isNotEmpty) {
+      request.files.add(http.MultipartFile.fromBytes(
+        'audio',
+        audioBytes,
+        filename: filename,
+      ));
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Запись успешно сохранена! Файл: ${file.path}'),
-              duration: const Duration(seconds: 3),
+            const SnackBar(
+              content: Text('Запись отправлена на сервер!'),
+              duration: Duration(seconds: 3),
             ),
           );
-          
-          // Обновляем список записей
-          await _loadSavedRecords();
           
           // Очищаем текущий текст и путь
           setState(() {
@@ -312,11 +363,49 @@ class _MainPageState extends State<MainPage> {
             _currentRecordingPath = null;
           });
         }
+      } else {
+        throw Exception('Сервер вернул ошибку: ${response.statusCode}');
       }
+
+      /* // Supabase Storage (временно отключено)
+      String? storagePath;
+      if (audioBytes != null && audioBytes.isNotEmpty) {
+        final userId = _supabase.auth.currentUser!.id;
+        final extension = kIsWeb ? 'webm' : 'm4a';
+        storagePath = '$userId/recording_$timestamp.$extension';
+
+        await _supabase.storage
+            .from('audio_recordings')
+            .uploadBinary(
+              storagePath,
+              audioBytes,
+              fileOptions: FileOptions(
+                contentType: kIsWeb ? 'audio/webm' : 'audio/m4a',
+              ),
+            );
+      }
+
+      // Сохраняем информацию о записи в базу данных
+      final record = {
+        'user_id': _supabase.auth.currentUser!.id,
+        'text': _recognizedText,
+        'file_path': storagePath ?? 'no_audio',
+        'created_at': DateTime.now().toIso8601String(),
+      };
+
+      final dbResponse = await _supabase
+          .from('audio_records')
+          .insert(record)
+          .select();
+
+      if (dbResponse.isNotEmpty) {
+        await _loadSavedRecords();
+      }
+      */
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ошибка сохранения: $e')),
+          SnackBar(content: Text('Ошибка отправки: $e')),
         );
       }
     } finally {
