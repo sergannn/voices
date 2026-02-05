@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' as supabase show User;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
@@ -125,11 +126,14 @@ class _MainPageState extends State<MainPage> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final _supabase = Supabase.instance.client;
   final _audioRecorder = AudioRecorder();
+  final _volumeController = TextEditingController();
+  final _sizeController = TextEditingController();
   String _recognizedText = '';
   bool _isRecording = false;
   bool _isProcessing = false;
   List<Map<String, dynamic>> _savedRecords = [];
   String? _currentRecordingPath;
+  String? _waveformImageBase64;
 
   @override
   void initState() {
@@ -140,6 +144,8 @@ class _MainPageState extends State<MainPage> {
   @override
   void dispose() {
     _audioRecorder.dispose();
+    _volumeController.dispose();
+    _sizeController.dispose();
     super.dispose();
   }
 
@@ -339,6 +345,9 @@ class _MainPageState extends State<MainPage> {
         Uri.parse('https://music.panfilius.ru/api/newRecord'),
       );
 
+  //    request.fields['volume'] = _volumeController.text;
+  //    request.fields['size'] = _sizeController.text;
+
       request.files.add(http.MultipartFile.fromBytes(
         'audio',
         audioBytes,
@@ -349,6 +358,15 @@ class _MainPageState extends State<MainPage> {
       final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
+        String? waveformBase64;
+        try {
+          final json = jsonDecode(response.body) as Map<String, dynamic>?;
+          final data = json?['data'] as Map<String, dynamic>?;
+          if (data != null && data['waveform_image'] != null) {
+            waveformBase64 = data['waveform_image'] as String;
+          }
+        } catch (_) {}
+
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -356,11 +374,11 @@ class _MainPageState extends State<MainPage> {
               duration: Duration(seconds: 3),
             ),
           );
-          
-          // Очищаем текущий текст и путь
+
           setState(() {
             _recognizedText = '';
             _currentRecordingPath = null;
+            _waveformImageBase64 = waveformBase64;
           });
         }
       } else {
@@ -489,7 +507,25 @@ class _MainPageState extends State<MainPage> {
             ),
             
             const SizedBox(height: 20),
-            
+            // громкость - потом
+            TextFormField(
+              controller: _volumeController,
+              decoration: const InputDecoration(
+                icon: Icon(Icons.volume_up),
+                hintText: 'Пропишите громкость',
+                labelText: 'Громкость',
+              ),
+            ),
+            TextFormField(
+              controller: _sizeController,
+              decoration: const InputDecoration(
+                icon: Icon(Icons.straighten),
+                hintText: 'Пропишите размер',
+                labelText: 'Размер',
+              ),
+            ),
+            const SizedBox(height: 16),
+
             // Кнопка записи
             ElevatedButton.icon(
               onPressed: _isRecording ? _stopRecordingAndRecognize : _startRecording,
@@ -518,6 +554,40 @@ class _MainPageState extends State<MainPage> {
               ),
               const SizedBox(height: 20),
             ],
+
+            // Waveform от сервера
+            if (_waveformImageBase64 != null && _waveformImageBase64!.isNotEmpty) ...[
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Волновая форма',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Image.memory(
+                        base64Decode(_waveformImageBase64!),
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 48),
+                      ),
+                      const SizedBox(height: 8),
+                      TextButton.icon(
+                        onPressed: () => setState(() => _waveformImageBase64 = null),
+                        icon: const Icon(Icons.close, size: 18),
+                        label: const Text('Скрыть'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
             
             // Распознанный текст
             if (_recognizedText.isNotEmpty) ...[
@@ -540,6 +610,14 @@ class _MainPageState extends State<MainPage> {
                       const SizedBox(height: 10),
                       Row(
                         children: [
+                    /*      TextFormField(
+  decoration: const InputDecoration(
+    icon: Icon(Icons.person),
+    hintText: 'What do people call you?',
+    labelText: 'Name *',
+  )),
+                          TextFormField(),*/
+
                           Expanded(
                             child: ElevatedButton.icon(
                               onPressed: _isProcessing ? null : _saveRecord,
