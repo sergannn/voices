@@ -13,6 +13,10 @@ import 'login.dart';
 import 'register.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'screens/lessons_screen.dart';
+import 'screens/tab_editor_screen.dart';
+import 'screens/metronome_screen.dart';
+import 'screens/profile_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
@@ -32,7 +36,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Auth System',
+      title: 'Drum Coach',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         useMaterial3: true,
@@ -134,6 +138,12 @@ class _MainPageState extends State<MainPage> {
   List<Map<String, dynamic>> _savedRecords = [];
   String? _currentRecordingPath;
   String? _waveformImageBase64;
+
+  // Навигация по разделам (требования 1.4.1 — главная с разделами)
+  int _selectedIndex = 0;
+  static const int _lessonsTotal = 10; // всего уроков
+  int _lessonsPassed = 0; // пройдено (пока заглушка)
+  double _bestResultPercent = 0; // лучший результат % (заглушка)
 
   @override
   void initState() {
@@ -460,53 +470,127 @@ class _MainPageState extends State<MainPage> {
     }
   }
 
+  String get _appBarTitle {
+    switch (_selectedIndex) {
+      case 0:
+        return 'Главная';
+      case 1:
+        return 'Уроки';
+      case 2:
+        return 'Редактор табов';
+      case 3:
+        return 'Метроном';
+      case 4:
+        return 'Профиль';
+      default:
+        return 'Drum Coach';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Главная страница'),
+        title: Text(_appBarTitle),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
-              // Выход из Firebase Auth
               await _auth.signOut();
-              // Также выходим из Supabase для совместимости
               await _supabase.auth.signOut();
             },
             tooltip: 'Выйти',
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Приветствие
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    const Text(
-                      'Добро пожаловать!',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          _buildHomeTab(),
+          const LessonsScreen(),
+          const TabEditorScreen(),
+          const MetronomeScreen(),
+          ProfileScreen(
+            userEmail: _supabase.auth.currentUser?.email,
+            onLogout: () async {
+              await _auth.signOut();
+              await _supabase.auth.signOut();
+            },
+          ),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (int index) => setState(() => _selectedIndex = index),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home), label: 'Главная'),
+          NavigationDestination(icon: Icon(Icons.school), label: 'Уроки'),
+          NavigationDestination(icon: Icon(Icons.music_note), label: 'Табы'),
+          NavigationDestination(icon: Icon(Icons.timer), label: 'Метроном'),
+          NavigationDestination(icon: Icon(Icons.person), label: 'Профиль'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHomeTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Приветствие
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  const Text(
+                    'Добро пожаловать!',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Вы вошли как: ${_supabase.auth.currentUser?.email ?? 'Пользователь'}',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Вы вошли как: ${_supabase.auth.currentUser?.email ?? 'Пользователь'}',
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ],
               ),
             ),
-            
-            const SizedBox(height: 20),
+          ),
+          // Информация о прогрессе (требования 1.4.1 — главная страница)
+          Card(
+            color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Пройдено $_lessonsPassed из $_lessonsTotal уроков',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _bestResultPercent > 0
+                        ? 'Лучший результат: ${_bestResultPercent.toStringAsFixed(0)}%'
+                        : 'Лучший результат: —',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
             // громкость - потом
             TextFormField(
               controller: _volumeController,
@@ -646,60 +730,53 @@ class _MainPageState extends State<MainPage> {
             ],
             
             // Сохраненные записи
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Сохраненные записи:',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: _savedRecords.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'Нет сохраненных записей',
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: _savedRecords.length,
-                            itemBuilder: (context, index) {
-                              final record = _savedRecords[index];
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: 10),
-                                child: ListTile(
-                                  title: Text(
-                                    record['text']?.toString() ?? '',
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  subtitle: Text(
-                                    'Создано: ${_formatDate(record['created_at'])}',
-                                    style: const TextStyle(fontSize: 12),
-                                  ),
-                                  trailing: IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () => _deleteRecord(record['id'].toString()),
-                                  ),
-                                  onTap: () {
-                                    _showRecordDetails(record);
-                                  },
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
+            const Text(
+              'Сохраненные записи:',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
               ),
             ),
+            const SizedBox(height: 10),
+            _savedRecords.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Text(
+                      'Нет сохраненных записей',
+                      style: TextStyle(color: Colors.grey),
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _savedRecords.length,
+                    itemBuilder: (context, index) {
+                      final record = _savedRecords[index];
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: ListTile(
+                          title: Text(
+                            record['text']?.toString() ?? '',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            'Создано: ${_formatDate(record['created_at'])}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _deleteRecord(record['id'].toString()),
+                          ),
+                          onTap: () => _showRecordDetails(record),
+                        ),
+                      );
+                    },
+                  ),
+            const SizedBox(height: 24),
           ],
         ),
-      ),
     );
   }
 
