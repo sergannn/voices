@@ -1,0 +1,7 @@
+# Расшифровка голоса через Telegram API
+fastapi>=0.100.0
+uvicorn>=0.22.0
+telethon>=1.28.0
+python-multipart>=0.0.6
+mutagen>=1.46.0
+requests>=2.28.0

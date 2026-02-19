@@ -8,6 +8,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
+import '../api_config.dart';
+
 /// Общий виджет записи, волновой формы и списка сохранённых записей.
 /// Используется на главной и в экране рудимента. Работает как раньше на главной.
 class HomeRecordContent extends StatefulWidget {
@@ -207,7 +209,7 @@ class _HomeRecordContentState extends State<HomeRecordContent> {
       final filename = 'recording_$timestamp.$extension';
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('https://music.panfilius.ru/api/newRecord'),
+        Uri.parse(ApiConfig.newRecordUrl),
       );
       request.files.add(http.MultipartFile.fromBytes(
         'audio',

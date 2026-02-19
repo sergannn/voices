@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Распознавание речи через Telegram</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        .recorder {
+            text-align: center;
+        }
+
+        .record-btn {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            border: none;
+            background: #667eea;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 20px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .record-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        .record-btn.recording {
+            background: #e74c3c;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+
+        .record-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            animation: none;
+        }
+
+        .status {
+            text-align: center;
+            margin: 20px 0;
+            min-height: 24px;
+            color: #666;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            min-height: 100px;
+        }
+
+        .result h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .result-text {
+            color: #555;
+            line-height: 1.6;
+            font-size: 16px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .result.empty {
+            color: #999;
+            font-style: italic;
+        }
+
+        .error {
+            color: #e74c3c;
+            background: #fee;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .audio-player {
+            margin: 20px 0;
+            width: 100%;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Распознавание речи</h1>
+        
+        <div class="recorder">
+            <button id="recordBtn" class="record-btn" title="Нажмите и удерживайте для записи">
+                🎤
+            </button>
+            <div class="status" id="status">Нажмите и удерживайте кнопку для записи</div>
+            
+            <div style="margin: 20px 0; text-align: center;">
+                <label for="fileInput" style="display: inline-block; padding: 10px 20px; background: #667eea; color: white; border-radius: 8px; cursor: pointer; font-size: 14px;">
+                    📁 Загрузить файл (webm, m4a, mp3, ogg...)
+                </label>
+                <input type="file" id="fileInput" accept="audio/*,video/webm" style="display: none;">
+            </div>
+            
+            <audio id="audioPlayer" class="audio-player" controls style="display: none;"></audio>
+        </div>
+
+        <div class="result" id="result">
+            <h3>Результат распознавания:</h3>
+            <div class="result-text empty" id="resultText">Здесь появится распознанный текст...</div>
+        </div>
+
+        <div id="error" style="display: none;"></div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8002/transcribe';  // Используем тот же порт, что и веб-интерфейс
+        
+        const recordBtn = document.getElementById('recordBtn');
+        const status = document.getElementById('status');
+        const resultText = document.getElementById('resultText');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const errorDiv = document.getElementById('error');
+        const resultDiv = document.getElementById('result');
+        const fileInput = document.getElementById('fileInput');
+
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        // Проверяем поддержку записи
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showError('Ваш браузер не поддерживает запись аудио');
+            recordBtn.disabled = true;
+        }
+
+        // Начало записи
+        recordBtn.addEventListener('mousedown', startRecording);
+        recordBtn.addEventListener('touchstart', startRecording);
+        
+        // Окончание записи
+        recordBtn.addEventListener('mouseup', stopRecording);
+        recordBtn.addEventListener('touchend', stopRecording);
+        recordBtn.addEventListener('mouseleave', stopRecording);
+
+        // Обработка загрузки файла
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            updateStatus('📤 Загрузка файла...', 'info');
+            resultText.textContent = '';
+            resultText.classList.add('empty');
+            hideError();
+            recordBtn.disabled = true;
+
+            try {
+                await sendFileToAPI(file);
+            } catch (err) {
+                showError('Ошибка: ' + err.message);
+                updateStatus('✗ Ошибка при обработке файла', 'error');
+            } finally {
+                recordBtn.disabled = false;
+                fileInput.value = ''; // Сброс input
+            }
+        });
+
+        async function startRecording(e) {
+            e.preventDefault();
+            if (isRecording) return;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/ogg; codecs=opus' });
+                    updateStatus('🎤 Запись завершена, обработка...', 'info');
+                    await sendToAPI(audioBlob);
+                    stream.getTracks().forEach(track => track.stop());
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+                recordBtn.classList.add('recording');
+                updateStatus('🔴 Запись... Отпустите кнопку для остановки', 'info');
+                resultText.textContent = '';
+                resultText.classList.add('empty');
+                hideError();
+
+            } catch (err) {
+                showError('Ошибка доступа к микрофону: ' + err.message);
+            }
+        }
+
+        function stopRecording(e) {
+            e.preventDefault();
+            if (!isRecording) return;
+
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            
+            isRecording = false;
+            recordBtn.classList.remove('recording');
+            status.innerHTML = '<span class="loading"></span> Обработка...';
+        }
+
+        async function sendToAPI(audioBlob) {
+            try {
+                updateStatus('📤 Отправка файла на сервер...', 'info');
+                recordBtn.disabled = true;
+                hideError();
+
+                const formData = new FormData();
+                formData.append('audio', audioBlob, 'recording.ogg');
+
+                updateStatus('🔄 Конвертация в формат Telegram...', 'info');
+                
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                updateStatus('📡 Ожидание ответа от сервера...', 'info');
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+
+                const result = await response.json();
+
+                if (result.success && result.text) {
+                    resultText.textContent = result.text;
+                    resultText.classList.remove('empty');
+                    updateStatus('✓ Распознавание завершено успешно!', 'success');
+                    
+                    // Показываем аудио
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    audioPlayer.src = audioUrl;
+                    audioPlayer.style.display = 'block';
+                } else {
+                    throw new Error(result.detail || 'Не удалось получить распознанный текст');
+                }
+
+            } catch (err) {
+                updateStatus('✗ Ошибка при распознавании', 'error');
+                showError('Ошибка: ' + err.message);
+            } finally {
+                recordBtn.disabled = false;
+            }
+        }
+
+        async function sendFileToAPI(file) {
+            try {
+                updateStatus('📤 Отправка файла на сервер...', 'info');
+                hideError();
+
+                const formData = new FormData();
+                formData.append('audio', file, file.name);
+
+                updateStatus('🔄 Конвертация в формат Telegram...', 'info');
+                
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                updateStatus('📡 Ожидание ответа от сервера...', 'info');
+
+                const responseResult = await response;
+
+                if (!responseResult.ok) {
+                    const errorData = await responseResult.json().catch(() => ({ detail: responseResult.statusText }));
+                    throw new Error(errorData.detail || `HTTP ${responseResult.status}`);
+                }
+
+                const result = await responseResult.json();
+
+                if (result.success && result.text) {
+                    resultText.textContent = result.text;
+                    resultText.classList.remove('empty');
+                    updateStatus('✓ Распознавание завершено успешно!', 'success');
+                    
+                    // Показываем аудио
+                    const audioUrl = URL.createObjectURL(file);
+                    audioPlayer.src = audioUrl;
+                    audioPlayer.style.display = 'block';
+                } else {
+                    throw new Error(result.detail || 'Не удалось получить распознанный текст');
+                }
+
+            } catch (err) {
+                updateStatus('✗ Ошибка при распознавании', 'error');
+                showError('Ошибка: ' + err.message);
+                throw err;
+            }
+        }
+
+        function updateStatus(message, type = 'info') {
+            status.textContent = message;
+            status.className = 'status';
+            if (type === 'success') {
+                status.style.color = '#27ae60';
+            } else if (type === 'error') {
+                status.style.color = '#e74c3c';
+            } else {
+                status.style.color = '#666';
+            }
+        }
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            resultDiv.style.display = 'none';
+        }
+
+        function hideError() {
+            errorDiv.style.display = 'none';
+            resultDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
+
