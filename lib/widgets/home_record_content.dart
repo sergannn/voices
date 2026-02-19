@@ -27,7 +27,6 @@ class _HomeRecordContentState extends State<HomeRecordContent> {
   final _audioRecorder = AudioRecorder();
   final _volumeController = TextEditingController();
   final _sizeController = TextEditingController();
-  String _recognizedText = '';
   bool _isRecording = false;
   bool _isProcessing = false;
   List<Map<String, dynamic>> _savedRecords = [];
@@ -98,7 +97,6 @@ class _HomeRecordContentState extends State<HomeRecordContent> {
         if (mounted) {
           setState(() {
             _isRecording = true;
-            _recognizedText = '';
             _currentRecordingPath = filePath;
           });
         }
@@ -119,49 +117,20 @@ class _HomeRecordContentState extends State<HomeRecordContent> {
     }
   }
 
-  Future<void> _stopRecordingAndRecognize() async {
+  Future<void> _stopRecording() async {
     try {
       final path = await _audioRecorder.stop();
       if (mounted) setState(() {
         _isRecording = false;
-        _isProcessing = true;
+        _isProcessing = false;
+        _currentRecordingPath = path;
       });
-
-      if (path != null && path.isNotEmpty) {
-        String fileInfo;
-        if (kIsWeb) {
-          fileInfo = 'Blob URL получен';
-        } else {
-          final file = File(path);
-          if (await file.exists()) {
-            final fileSize = await file.length();
-            fileInfo = 'Размер файла: ${(fileSize / 1024).toStringAsFixed(2)} KB';
-          } else {
-            throw Exception('Файл записи не найден');
-          }
-        }
-        await Future.delayed(const Duration(seconds: 2));
-        final sampleTexts = [
-          'Это пример распознанного текста из аудиозаписи. $fileInfo',
-          'Сегодня прекрасная погода для прогулки в парке. $fileInfo',
-          'Технологии искусственного интеллекта стремительно развиваются. Запись сохранена успешно.',
-          'Для успешного выполнения задачи необходимо тщательное планирование. Аудио файл готов.',
-        ];
-        final randomText = sampleTexts[DateTime.now().millisecondsSinceEpoch % sampleTexts.length];
-        if (mounted) {
-          setState(() {
-            _recognizedText = randomText;
-            _isProcessing = false;
-            _currentRecordingPath = path;
-          });
-        }
-      } else {
+      if (path == null || path.isEmpty) {
         throw Exception('Не удалось получить путь к файлу записи');
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _recognizedText = 'Ошибка при остановке записи: $e';
           _isProcessing = false;
           _isRecording = false;
         });
@@ -236,7 +205,6 @@ class _HomeRecordContentState extends State<HomeRecordContent> {
             ),
           );
           setState(() {
-            _recognizedText = '';
             _currentRecordingPath = null;
             _waveformImageBase64 = waveformBase64;
           });
@@ -329,7 +297,7 @@ class _HomeRecordContentState extends State<HomeRecordContent> {
         ),
         const SizedBox(height: 16),
         ElevatedButton.icon(
-          onPressed: _isRecording ? _stopRecordingAndRecognize : _startRecording,
+          onPressed: _isRecording ? _stopRecording : _startRecording,
           style: ElevatedButton.styleFrom(
             backgroundColor: _isRecording ? Colors.red : Colors.blue,
             foregroundColor: Colors.white,
@@ -381,28 +349,25 @@ class _HomeRecordContentState extends State<HomeRecordContent> {
           ),
           const SizedBox(height: 20),
         ],
-        if (_recognizedText.isNotEmpty) ...[
+        if (_currentRecordingPath != null && _currentRecordingPath!.isNotEmpty) ...[
           Card(
-            color: Colors.green[50],
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Результат распознавания:',
+                    'Запись готова',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  const SizedBox(height: 10),
-                  Text(_recognizedText),
                   const SizedBox(height: 10),
                   Row(
                     children: [
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: _isProcessing ? null : _saveRecord,
-                          icon: const Icon(Icons.save),
-                          label: const Text('Сохранить запись'),
+                          icon: const Icon(Icons.upload),
+                          label: const Text('Отправить на сервер'),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -410,8 +375,8 @@ class _HomeRecordContentState extends State<HomeRecordContent> {
                         child: OutlinedButton(
                           onPressed: _isProcessing
                               ? null
-                              : () => setState(() => _recognizedText = ''),
-                          child: const Text('Очистить'),
+                              : () => setState(() => _currentRecordingPath = null),
+                          child: const Text('Отменить'),
                         ),
                       ),
                     ],
